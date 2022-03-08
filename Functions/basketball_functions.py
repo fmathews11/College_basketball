@@ -27,10 +27,12 @@ f = open('spread_model.pickle','rb')
 spread_model = pickle.load(f)
 f = open('college_colors.pickle','rb')
 college_colors = pickle.load(f)
+f = open('neutral_court_model.pickle','rb')
+neutral_court_model = pickle.load(f)
 
 #Create Kenpom browser 
 browser = login(kp_login, kp_pw)
-
+sum_df = kp.get_efficiency(browser,2022)
 del kp_login, kp_pw
 
 #Establishing list of relevant features for each model:
@@ -69,6 +71,23 @@ spread_cols = ['simple_rating_system',
  'opp_simple_rating_system',
  'opp_win_percentage',
  'home']
+
+neutral_court_cols = ['offensive_rating',
+ 'allowed_effective_field_goal_percentage',
+ 'allowed_total_rebound_percentage',
+ 'allowed_turnover_percentage',
+ 'simple_rating_system',
+ 'total_rebound_percentage',
+ 'win_percentage',
+ 'opp_assist_percentage',
+ 'opp_offensive_rating',
+ 'opp_simple_rating_system',
+ 'opp_win_percentage',
+ 'opp_effective_field_goal_percentage_allowed',
+ 'opp_free_throw_attempt_rate_allowed',
+ 'opp_free_throw_percentage_allowed',
+ 'opp_turnover_percentage_allowed',
+ 'Luck']
 
 #List to use with pd.map() to quickly rename teams
 in_agg = ['Southern Methodist',
@@ -548,6 +567,50 @@ valid_team_names = ['Abilene Christian',
  'Yale',
  'Youngstown State']
 
+list_of_stats = ['team',
+                 'home',
+                 'opponent',
+                 'date',
+                 'season',
+                 'pace',
+                  'result',
+                  'wins',
+                  'win_percentage',
+                  'two_point_field_goals',
+                  'two_point_field_goal_percentage',
+                   'two_point_field_goal_attempts',
+                   'turnovers',
+                   'turnover_percentage',
+                    'true_shooting_percentage',
+                    'total_rebounds',
+                    'total_rebound_percentage',
+                     'three_point_field_goals',
+                     'three_point_field_goal_percentage',
+                     'three_point_field_goal_attempts',
+                     'three_point_attempt_rate',
+                     'steals','steal_percentage',
+                     'ranking',
+                     'points',
+                     'personal_fouls',
+                     'offensive_rebounds',
+                     'offensive_rebound_percentage',
+                     'offensive_rating',
+                     'minutes_played',
+                     'losses',
+                     'free_throws',
+                     'free_throw_percentage',
+                     'free_throw_attempts',
+                     'free_throw_attempt_rate',
+                     'field_goals',
+                     'field_goal_percentage',
+                     'field_goal_attempts',
+                     'effective_field_goal_percentage',
+                     'defensive_rebounds',
+                     'defensive_rating',
+                     'blocks',
+                     'block_percentage',
+                     'assists',
+                     'assist_percentage']
 # Defining functions
 
 def create_current_dataframe():
@@ -588,7 +651,7 @@ def create_kp_df(season = 2022):
     kp_df2.Team = kp_df2.Team.str.replace(" St.",' State')
     return kp_df2
 
-def get_game_prediction(df_agg,kp_df,home_team,away_team):
+def get_game_prediction(df_agg,kp_df,home_team,away_team,spread = True,verbose = False):
     """
     Returns:
         A predicted probability of the outcome of the game for the teams passed as parameters.
@@ -658,17 +721,518 @@ def get_game_prediction(df_agg,kp_df,home_team,away_team):
     #Predict a win & loss probability
     loss_prob = wl_model.predict_proba(df_wl)[0][0]
     win_prob = wl_model.predict_proba(df_wl)[0][1]
-
-    if win_prob >= loss_prob:
-        print(home_team + ' has a ' + str(round(win_prob*100,2)) + '% chance of winning at home against ' +away_team)
-    else:
-        print(away_team + ' has a ' + str(round(loss_prob*100,2)) + '% chance of winning on the road against ' + home_team)
     
+    if verbose:
+        if win_prob >= loss_prob:
+            print(home_team + ' has a ' + str(round(win_prob*100,2)) + '% chance of winning at home against ' +away_team)
+        else:
+            print(away_team + ' has a ' + str(round(loss_prob*100,2)) + '% chance of winning on the road against ' + home_team)
+    
+    if spread:
     #Predict a spread and print it
-    df_spread = df_pred[spread_cols]
-    predicted_spread = int(round(spread_model.predict(df_spread)[0]))
-    print("Predicted Spread is {}".format(predicted_spread))
+        df_spread = df_pred[spread_cols]
+        predicted_spread = int(round(spread_model.predict(df_spread)[0]))
+        if verbose:
+            print("Predicted Spread is {}".format(predicted_spread))
+        return round(win_prob,3),predicted_spread
+    else:
+        return round(win_prob,3)
 
+    
+def get_game_prediction_neutral(df_agg,kp_df,team_1,team_2):
+
+# Win probability is expressed in the form of team_1 beating team_2 on a neutral court
+
+    class CustomError(Exception):
+        pass
+
+    if team_1 in df_agg.name.unique().tolist() and team_2 in df_agg.name.unique().tolist():
+        temp_df_2 = df_agg.loc[df_agg.name == team_1].loc[:,df_agg.columns[df_agg.columns.str.contains('percen') | df_agg.columns.str.contains('rat') | (df_agg.columns == 'pace') | (df_agg.columns == 'name')]]
+        temp_df_3 = df_agg.loc[df_agg.name == team_2].loc[:,df_agg.columns[df_agg.columns.str.contains('percen') | df_agg.columns.str.contains('rat') | (df_agg.columns == 'pace') | (df_agg.columns == 'name')]]
+        old_names = temp_df_2.columns[temp_df_2.columns.str.contains('opp_')].to_list()
+        new_names = [i.replace('opp','allowed') for i in temp_df_2.columns[temp_df_2.columns.str.contains('opp_')].to_list()]
+        name_dict = dict(zip(old_names,new_names))
+        temp_df_2_dict = temp_df_2.rename(columns = name_dict).to_dict(orient = 'list')
+        temp_df_2_dict.update(temp_df_3.iloc[0,:10].rename(dict(zip(temp_df_3.iloc[0,:10].index,['opp_'+str(i) for i in temp_df_3.iloc[0,:10].index]))).to_frame().transpose().to_dict(orient = 'list'))
+        temp_df_2_dict.update(temp_df_3.iloc[0,25:].rename(dict(zip(temp_df_3.iloc[0,25:].index,['opp_'+str(i) for i in temp_df_3.iloc[0,25:].index]))).to_frame().transpose().to_dict(orient = 'list'))
+        temp_df_2_dict.update(temp_df_3.iloc[0,10:25].rename(dict(zip(temp_df_3.iloc[0,10:25].index,[i + "_allowed" for i in temp_df_3.iloc[0,10:25].index]))).to_frame().transpose().to_dict(orient = 'list'))
+        temp_df_3_dict = temp_df_3.rename(columns = name_dict).to_dict(orient = 'list')
+        temp_df_3_dict.update(temp_df_2.iloc[0,:10].rename(dict(zip(temp_df_2.iloc[0,:10].index,['opp_'+str(i) for i in temp_df_2.iloc[0,:10].index]))).to_frame().transpose().to_dict(orient = 'list'))
+        temp_df_3_dict.update(temp_df_2.iloc[0,25:].rename(dict(zip(temp_df_2.iloc[0,25:].index,['opp_'+str(i) for i in temp_df_2.iloc[0,25:].index]))).to_frame().transpose().to_dict(orient = 'list'))
+        temp_df_3_dict.update(temp_df_2.iloc[0,10:25].rename(dict(zip(temp_df_2.iloc[0,10:25].index,[i + "_allowed" for i in temp_df_2.iloc[0,10:25].index]))).to_frame().transpose().to_dict(orient = 'list'))
+        for i in temp_df_3_dict.keys():
+            temp_df_2_dict[i]+=(temp_df_3_dict[i])
+        master_dict = {key:[] for key in temp_df_2_dict.keys()}
+
+        for i in temp_df_2_dict.keys():
+            master_dict[i] += temp_df_2_dict[i]
+        df_pred = pd.DataFrame.from_dict(master_dict)
+        df_pred = df_pred[df_pred.name == team_1]
+        for i in df_pred.loc[:,df_pred.columns[df_pred.columns.str.contains('percent')]].columns:
+             if df_pred[i].max() > 1:
+                df_pred[i] = [j/100 for j in df_pred[i]]
+        df_pred = pd.merge(df_pred,kp_df,left_on = 'name',right_on = "Team",how = 'left').drop("Team",axis = 1)
+        return round(neutral_court_model.predict_proba(df_pred[neutral_court_cols])[0][1],3)
+    else:
+        raise CustomError("Check Team Names")    
+
+    
+def transform_box_df(df):
+
+#Establishing a list of stats which I want
+    list_of_stats = ['team',
+                     'home',
+                     'opponent',
+                     'date',
+                     'season',
+                     'pace',
+                     'result',
+                     'wins',
+                     'win_percentage',
+                     'two_point_field_goals',
+                     'two_point_field_goal_percentage',
+                     'two_point_field_goal_attempts',
+                     'turnovers',
+                     'turnover_percentage',
+                     'true_shooting_percentage',
+                     'total_rebounds',
+                     'total_rebound_percentage',
+                     'three_point_field_goals',
+                     'three_point_field_goal_percentage',
+                     'three_point_field_goal_attempts',
+                     'three_point_attempt_rate',
+                     'steals','steal_percentage',
+                     'ranking',
+                     'points',
+                     'personal_fouls',
+                     'offensive_rebounds',
+                     'offensive_rebound_percentage',
+                     'offensive_rating',
+                     'minutes_played',
+                     'losses',
+                     'free_throws',
+                     'free_throw_percentage',
+                     'free_throw_attempts',
+                     'free_throw_attempt_rate',
+                     'field_goals',
+                     'field_goal_percentage',
+                     'field_goal_attempts',
+                     'effective_field_goal_percentage',
+                     'defensive_rebounds',
+                     'defensive_rating',
+                     'blocks',
+                     'block_percentage',
+                     'assists',
+                     'assist_percentage']
+
+# Adding opponent_ for all the opponent stats
+    for stat in list_of_stats[7:]:
+        list_of_stats.append('opponent_'+stat)
+        
+#Creating an empty dictionary to populate.  This approach is much faster than using Pandas    
+    stats_dict = {key:[] for key in list_of_stats}
+    
+#Begin the loop
+    for Team in df.losing_name.unique().tolist():
+
+        #Home/Winner
+        temp_df = df[(df.winning_name == Team) & (df.winner == "Home")]
+        stats_dict['team'] += temp_df.winning_name.tolist()
+        stats_dict['opponent']  += temp_df.losing_name.tolist()
+        stats_dict['date']  += temp_df.date.tolist()
+        stats_dict['pace']  += temp_df.pace.tolist()
+        stats_dict['wins']  += temp_df.home_wins.tolist()
+        stats_dict['win_percentage']  += temp_df.home_win_percentage.tolist()
+        stats_dict['two_point_field_goals']  += temp_df.home_two_point_field_goals.tolist()
+        stats_dict['two_point_field_goal_percentage']  += temp_df.home_two_point_field_goal_percentage.tolist() 
+        stats_dict['two_point_field_goal_attempts']  += temp_df.home_two_point_field_goal_attempts.tolist()
+        stats_dict['turnovers']  += temp_df.home_turnovers.tolist()
+        stats_dict['turnover_percentage']  += temp_df.home_turnover_percentage.tolist()
+        stats_dict['true_shooting_percentage']  += temp_df.home_true_shooting_percentage.tolist()
+        stats_dict['total_rebounds']  += temp_df.home_total_rebounds.tolist()
+        stats_dict['total_rebound_percentage']  += temp_df.home_total_rebound_percentage.tolist()
+        stats_dict['three_point_field_goals']  += temp_df.home_three_point_field_goals.tolist()
+        stats_dict['three_point_field_goal_percentage']  += temp_df.home_three_point_field_goal_percentage.tolist()
+        stats_dict['three_point_field_goal_attempts']  += temp_df.home_three_point_field_goal_attempts.tolist()
+        stats_dict['three_point_attempt_rate']  += temp_df.home_three_point_attempt_rate.tolist()
+        stats_dict['steals']  += temp_df.home_steals.tolist()
+        stats_dict['steal_percentage']  += temp_df.home_steal_percentage.tolist()
+        stats_dict['ranking']  += temp_df.home_ranking.tolist()
+        stats_dict['points']  += temp_df.home_points.tolist()
+        stats_dict['personal_fouls']  += temp_df.home_personal_fouls.tolist()
+        stats_dict['offensive_rebounds']  += temp_df.home_offensive_rebounds.tolist()
+        stats_dict['offensive_rebound_percentage']  += temp_df.home_offensive_rebound_percentage.tolist()
+        stats_dict['offensive_rating']  += temp_df.home_offensive_rating.tolist()
+        stats_dict['minutes_played']  += temp_df.home_minutes_played.tolist()
+        stats_dict['losses']  += temp_df.home_losses.tolist()
+        stats_dict['free_throws']  += temp_df.home_free_throws.tolist()
+        stats_dict['free_throw_percentage']  += temp_df.home_free_throw_percentage.tolist()
+        stats_dict['free_throw_attempts']  += temp_df.home_free_throw_attempts.tolist()
+        stats_dict['free_throw_attempt_rate']  += temp_df.home_free_throw_attempt_rate.tolist()
+        stats_dict['field_goals']  += temp_df.home_field_goals.tolist()
+        stats_dict['field_goal_percentage']  += temp_df.home_field_goal_percentage.tolist()
+        stats_dict['field_goal_attempts']  += temp_df.home_field_goal_attempts.tolist()
+        stats_dict['effective_field_goal_percentage']  += temp_df.home_effective_field_goal_percentage.tolist()
+        stats_dict['defensive_rebounds']  += temp_df.home_defensive_rebounds.tolist()
+        stats_dict['defensive_rating']  += temp_df.home_defensive_rating.tolist()
+        stats_dict['blocks']  += temp_df.home_blocks.tolist()
+        stats_dict['block_percentage']  += temp_df.home_block_percentage.tolist()
+        stats_dict['assists']  += temp_df.home_assists.tolist()
+        stats_dict['assist_percentage']  += temp_df.home_assist_percentage.tolist()
+        stats_dict['result'] += [1] * len(temp_df)
+        stats_dict['opponent_wins'] += temp_df.away_wins.tolist()
+        stats_dict['opponent_win_percentage']  += temp_df.away_win_percentage.tolist()
+        stats_dict['opponent_two_point_field_goals']  += temp_df.away_two_point_field_goals.tolist()
+        stats_dict['opponent_two_point_field_goal_percentage']  += temp_df.away_two_point_field_goal_percentage.tolist() 
+        stats_dict['opponent_two_point_field_goal_attempts']  += temp_df.away_two_point_field_goal_attempts.tolist()
+        stats_dict['opponent_turnovers']  += temp_df.away_turnovers.tolist()
+        stats_dict['opponent_turnover_percentage']  += temp_df.away_turnover_percentage.tolist()
+        stats_dict['opponent_true_shooting_percentage']  += temp_df.away_true_shooting_percentage.tolist()
+        stats_dict['opponent_total_rebounds']  += temp_df.away_total_rebounds.tolist()
+        stats_dict['opponent_total_rebound_percentage']  += temp_df.away_total_rebound_percentage.tolist()
+        stats_dict['opponent_three_point_field_goals']  += temp_df.away_three_point_field_goals.tolist()
+        stats_dict['opponent_three_point_field_goal_percentage']  += temp_df.away_three_point_field_goal_percentage.tolist()
+        stats_dict['opponent_three_point_field_goal_attempts']  += temp_df.away_three_point_field_goal_attempts.tolist()
+        stats_dict['opponent_three_point_attempt_rate']  += temp_df.away_three_point_attempt_rate.tolist()
+        stats_dict['opponent_steals']  += temp_df.away_steals.tolist()
+        stats_dict['opponent_steal_percentage']  += temp_df.away_steal_percentage.tolist()
+        stats_dict['opponent_ranking']  += temp_df.away_ranking.tolist()
+        stats_dict['opponent_points']  += temp_df.away_points.tolist()
+        stats_dict['opponent_personal_fouls']  += temp_df.away_personal_fouls.tolist()
+        stats_dict['opponent_offensive_rebounds']  += temp_df.away_offensive_rebounds.tolist()
+        stats_dict['opponent_offensive_rebound_percentage']  += temp_df.away_offensive_rebound_percentage.tolist()
+        stats_dict['opponent_offensive_rating']  += temp_df.away_offensive_rating.tolist()
+        stats_dict['opponent_minutes_played']  += temp_df.away_minutes_played.tolist()
+        stats_dict['opponent_losses']  += temp_df.away_losses.tolist()
+        stats_dict['opponent_free_throws']  += temp_df.away_free_throws.tolist()
+        stats_dict['opponent_free_throw_percentage']  += temp_df.away_free_throw_percentage.tolist()
+        stats_dict['opponent_free_throw_attempts']  += temp_df.away_free_throw_attempts.tolist()
+        stats_dict['opponent_free_throw_attempt_rate']  += temp_df.away_free_throw_attempt_rate.tolist()
+        stats_dict['opponent_field_goals']  += temp_df.away_field_goals.tolist()
+        stats_dict['opponent_field_goal_percentage']  += temp_df.away_field_goal_percentage.tolist()
+        stats_dict['opponent_field_goal_attempts']  += temp_df.away_field_goal_attempts.tolist()
+        stats_dict['opponent_effective_field_goal_percentage']  += temp_df.away_effective_field_goal_percentage.tolist()
+        stats_dict['opponent_defensive_rebounds']  += temp_df.away_defensive_rebounds.tolist()
+        stats_dict['opponent_defensive_rating']  += temp_df.away_defensive_rating.tolist()
+        stats_dict['opponent_blocks']  += temp_df.away_blocks.tolist()
+        stats_dict['opponent_block_percentage']  += temp_df.away_block_percentage.tolist()
+        stats_dict['opponent_assists']  += temp_df.away_assists.tolist()
+        stats_dict['opponent_assist_percentage']  += temp_df.away_assist_percentage.tolist()
+        stats_dict['home'] += [1] * len(temp_df)
+        stats_dict['season']  += temp_df.season.tolist()
+
+        #Away/Winner  Games won on the road
+        temp_df = df[(df.winning_name == Team) & (df.winner == "Away")]
+        stats_dict['team']  += temp_df.winning_name.tolist()
+        stats_dict['opponent']  += temp_df.losing_name.tolist()
+        stats_dict['date']  += temp_df.date.tolist()
+        stats_dict['pace']  += temp_df.pace.tolist()
+        stats_dict['wins']  += temp_df.away_wins.tolist()
+        stats_dict['win_percentage']  += temp_df.away_win_percentage.tolist()
+        stats_dict['two_point_field_goals']  += temp_df.away_two_point_field_goals.tolist()
+        stats_dict['two_point_field_goal_percentage']  += temp_df.away_two_point_field_goal_percentage.tolist() 
+        stats_dict['two_point_field_goal_attempts']  += temp_df.away_two_point_field_goal_attempts.tolist()
+        stats_dict['turnovers']  += temp_df.away_turnovers.tolist()
+        stats_dict['turnover_percentage']  += temp_df.away_turnover_percentage.tolist()
+        stats_dict['true_shooting_percentage']  += temp_df.away_true_shooting_percentage.tolist()
+        stats_dict['total_rebounds']  += temp_df.away_total_rebounds.tolist()
+        stats_dict['total_rebound_percentage']  += temp_df.away_total_rebound_percentage.tolist()
+        stats_dict['three_point_field_goals']  += temp_df.away_three_point_field_goals.tolist()
+        stats_dict['three_point_field_goal_percentage']  += temp_df.away_three_point_field_goal_percentage.tolist()
+        stats_dict['three_point_field_goal_attempts']  += temp_df.away_three_point_field_goal_attempts.tolist()
+        stats_dict['three_point_attempt_rate']  += temp_df.away_three_point_attempt_rate.tolist()
+        stats_dict['steals']  += temp_df.away_steals.tolist()
+        stats_dict['steal_percentage']  += temp_df.away_steal_percentage.tolist()
+        stats_dict['ranking']  += temp_df.away_ranking.tolist()
+        stats_dict['points']  += temp_df.away_points.tolist()
+        stats_dict['personal_fouls']  += temp_df.away_personal_fouls.tolist()
+        stats_dict['offensive_rebounds']  += temp_df.away_offensive_rebounds.tolist()
+        stats_dict['offensive_rebound_percentage']  += temp_df.away_offensive_rebound_percentage.tolist()
+        stats_dict['offensive_rating']  += temp_df.away_offensive_rating.tolist()
+        stats_dict['minutes_played']  += temp_df.away_minutes_played.tolist()
+        stats_dict['losses']  += temp_df.away_losses.tolist()
+        stats_dict['free_throws']  += temp_df.away_free_throws.tolist()
+        stats_dict['free_throw_percentage']  += temp_df.away_free_throw_percentage.tolist()
+        stats_dict['free_throw_attempts']  += temp_df.away_free_throw_attempts.tolist()
+        stats_dict['free_throw_attempt_rate']  += temp_df.away_free_throw_attempt_rate.tolist()
+        stats_dict['field_goals']  += temp_df.away_field_goals.tolist()
+        stats_dict['field_goal_percentage']  += temp_df.away_field_goal_percentage.tolist()
+        stats_dict['field_goal_attempts']  += temp_df.away_field_goal_attempts.tolist()
+        stats_dict['effective_field_goal_percentage']  += temp_df.away_effective_field_goal_percentage.tolist()
+        stats_dict['defensive_rebounds']  += temp_df.away_defensive_rebounds.tolist()
+        stats_dict['defensive_rating']  += temp_df.away_defensive_rating.tolist()
+        stats_dict['blocks']  += temp_df.away_blocks.tolist()
+        stats_dict['block_percentage']  += temp_df.away_block_percentage.tolist()
+        stats_dict['assists']  += temp_df.away_assists.tolist()
+        stats_dict['assist_percentage']  += temp_df.away_assist_percentage.tolist()
+        stats_dict['result'] += [1] * len(temp_df)
+        stats_dict['opponent_wins']  += temp_df.home_wins.tolist()
+        stats_dict['opponent_win_percentage']  += temp_df.home_win_percentage.tolist()
+        stats_dict['opponent_two_point_field_goals']  += temp_df.home_two_point_field_goals.tolist()
+        stats_dict['opponent_two_point_field_goal_percentage']  += temp_df.home_two_point_field_goal_percentage.tolist() 
+        stats_dict['opponent_two_point_field_goal_attempts']  += temp_df.home_two_point_field_goal_attempts.tolist()
+        stats_dict['opponent_turnovers']  += temp_df.home_turnovers.tolist()
+        stats_dict['opponent_turnover_percentage']  += temp_df.home_turnover_percentage.tolist()
+        stats_dict['opponent_true_shooting_percentage']  += temp_df.home_true_shooting_percentage.tolist()
+        stats_dict['opponent_total_rebounds']  += temp_df.home_total_rebounds.tolist()
+        stats_dict['opponent_total_rebound_percentage']  += temp_df.home_total_rebound_percentage.tolist()
+        stats_dict['opponent_three_point_field_goals']  += temp_df.home_three_point_field_goals.tolist()
+        stats_dict['opponent_three_point_field_goal_percentage']  += temp_df.home_three_point_field_goal_percentage.tolist()
+        stats_dict['opponent_three_point_field_goal_attempts']  += temp_df.home_three_point_field_goal_attempts.tolist()
+        stats_dict['opponent_three_point_attempt_rate']  += temp_df.home_three_point_attempt_rate.tolist()
+        stats_dict['opponent_steals']  += temp_df.home_steals.tolist()
+        stats_dict['opponent_steal_percentage']  += temp_df.home_steal_percentage.tolist()
+        stats_dict['opponent_ranking']  += temp_df.home_ranking.tolist()
+        stats_dict['opponent_points']  += temp_df.home_points.tolist()
+        stats_dict['opponent_personal_fouls']  += temp_df.home_personal_fouls.tolist()
+        stats_dict['opponent_offensive_rebounds']  += temp_df.home_offensive_rebounds.tolist()
+        stats_dict['opponent_offensive_rebound_percentage']  += temp_df.home_offensive_rebound_percentage.tolist()
+        stats_dict['opponent_offensive_rating']  += temp_df.home_offensive_rating.tolist()
+        stats_dict['opponent_minutes_played']  += temp_df.home_minutes_played.tolist()
+        stats_dict['opponent_losses']  += temp_df.home_losses.tolist()
+        stats_dict['opponent_free_throws']  += temp_df.home_free_throws.tolist()
+        stats_dict['opponent_free_throw_percentage']  += temp_df.home_free_throw_percentage.tolist()
+        stats_dict['opponent_free_throw_attempts']  += temp_df.home_free_throw_attempts.tolist()
+        stats_dict['opponent_free_throw_attempt_rate']  += temp_df.home_free_throw_attempt_rate.tolist()
+        stats_dict['opponent_field_goals']  += temp_df.home_field_goals.tolist()
+        stats_dict['opponent_field_goal_percentage']  += temp_df.home_field_goal_percentage.tolist()
+        stats_dict['opponent_field_goal_attempts']  += temp_df.home_field_goal_attempts.tolist()
+        stats_dict['opponent_effective_field_goal_percentage']  += temp_df.home_effective_field_goal_percentage.tolist()
+        stats_dict['opponent_defensive_rebounds']  += temp_df.home_defensive_rebounds.tolist()
+        stats_dict['opponent_defensive_rating']  += temp_df.home_defensive_rating.tolist()
+        stats_dict['opponent_blocks']  += temp_df.home_blocks.tolist()
+        stats_dict['opponent_block_percentage']  += temp_df.home_block_percentage.tolist()
+        stats_dict['opponent_assists']  += temp_df.home_assists.tolist()
+        stats_dict['opponent_assist_percentage']  += temp_df.home_assist_percentage.tolist()
+        stats_dict['home'] += [0] * len(temp_df)
+        stats_dict['season']  += temp_df.season.tolist()
+
+        #Away/loser Games lost at home
+        temp_df = df[(df.losing_name == Team) & (df.winner == "Away")]
+        stats_dict['team']  += temp_df.losing_name.tolist()
+        stats_dict['opponent']  += temp_df.winning_name.tolist()
+        stats_dict['date']  += temp_df.date.tolist()
+        stats_dict['pace']  += temp_df.pace.tolist()
+        stats_dict['wins']  += temp_df.home_wins.tolist()
+        stats_dict['win_percentage']  += temp_df.home_win_percentage.tolist()
+        stats_dict['two_point_field_goals']  += temp_df.home_two_point_field_goals.tolist()
+        stats_dict['two_point_field_goal_percentage']  += temp_df.home_two_point_field_goal_percentage.tolist() 
+        stats_dict['two_point_field_goal_attempts']  += temp_df.home_two_point_field_goal_attempts.tolist()
+        stats_dict['turnovers']  += temp_df.home_turnovers.tolist()
+        stats_dict['turnover_percentage']  += temp_df.home_turnover_percentage.tolist()
+        stats_dict['true_shooting_percentage']  += temp_df.home_true_shooting_percentage.tolist()
+        stats_dict['total_rebounds']  += temp_df.home_total_rebounds.tolist()
+        stats_dict['total_rebound_percentage']  += temp_df.home_total_rebound_percentage.tolist()
+        stats_dict['three_point_field_goals']  += temp_df.home_three_point_field_goals.tolist()
+        stats_dict['three_point_field_goal_percentage']  += temp_df.home_three_point_field_goal_percentage.tolist()
+        stats_dict['three_point_field_goal_attempts']  += temp_df.home_three_point_field_goal_attempts.tolist()
+        stats_dict['three_point_attempt_rate']  += temp_df.home_three_point_attempt_rate.tolist()
+        stats_dict['steals']  += temp_df.home_steals.tolist()
+        stats_dict['steal_percentage']  += temp_df.home_steal_percentage.tolist()
+        stats_dict['ranking']  += temp_df.home_ranking.tolist()
+        stats_dict['points']  += temp_df.home_points.tolist()
+        stats_dict['personal_fouls']  += temp_df.home_personal_fouls.tolist()
+        stats_dict['offensive_rebounds']  += temp_df.home_offensive_rebounds.tolist()
+        stats_dict['offensive_rebound_percentage']  += temp_df.home_offensive_rebound_percentage.tolist()
+        stats_dict['offensive_rating']  += temp_df.home_offensive_rating.tolist()
+        stats_dict['minutes_played']  += temp_df.home_minutes_played.tolist()
+        stats_dict['losses']  += temp_df.home_losses.tolist()
+        stats_dict['free_throws']  += temp_df.home_free_throws.tolist()
+        stats_dict['free_throw_percentage']  += temp_df.home_free_throw_percentage.tolist()
+        stats_dict['free_throw_attempts']  += temp_df.home_free_throw_attempts.tolist()
+        stats_dict['free_throw_attempt_rate']  += temp_df.home_free_throw_attempt_rate.tolist()
+        stats_dict['field_goals']  += temp_df.home_field_goals.tolist()
+        stats_dict['field_goal_percentage']  += temp_df.home_field_goal_percentage.tolist()
+        stats_dict['field_goal_attempts']  += temp_df.home_field_goal_attempts.tolist()
+        stats_dict['effective_field_goal_percentage']  += temp_df.home_effective_field_goal_percentage.tolist()
+        stats_dict['defensive_rebounds']  += temp_df.home_defensive_rebounds.tolist()
+        stats_dict['defensive_rating']  += temp_df.home_defensive_rating.tolist()
+        stats_dict['blocks']  += temp_df.home_blocks.tolist()
+        stats_dict['block_percentage']  += temp_df.home_block_percentage.tolist()
+        stats_dict['assists']  += temp_df.home_assists.tolist()
+        stats_dict['assist_percentage']  += temp_df.home_assist_percentage.tolist()
+        stats_dict['result'] += [0] * len(temp_df)
+        stats_dict['opponent_wins']  += temp_df.away_wins.tolist()
+        stats_dict['opponent_win_percentage']  += temp_df.away_win_percentage.tolist()
+        stats_dict['opponent_two_point_field_goals']  += temp_df.away_two_point_field_goals.tolist()
+        stats_dict['opponent_two_point_field_goal_percentage']  += temp_df.away_two_point_field_goal_percentage.tolist() 
+        stats_dict['opponent_two_point_field_goal_attempts']  += temp_df.away_two_point_field_goal_attempts.tolist()
+        stats_dict['opponent_turnovers']  += temp_df.away_turnovers.tolist()
+        stats_dict['opponent_turnover_percentage']  += temp_df.away_turnover_percentage.tolist()
+        stats_dict['opponent_true_shooting_percentage']  += temp_df.away_true_shooting_percentage.tolist()
+        stats_dict['opponent_total_rebounds']  += temp_df.away_total_rebounds.tolist()
+        stats_dict['opponent_total_rebound_percentage']  += temp_df.away_total_rebound_percentage.tolist()
+        stats_dict['opponent_three_point_field_goals']  += temp_df.away_three_point_field_goals.tolist()
+        stats_dict['opponent_three_point_field_goal_percentage']  += temp_df.away_three_point_field_goal_percentage.tolist()
+        stats_dict['opponent_three_point_field_goal_attempts']  += temp_df.away_three_point_field_goal_attempts.tolist()
+        stats_dict['opponent_three_point_attempt_rate']  += temp_df.away_three_point_attempt_rate.tolist()
+        stats_dict['opponent_steals']  += temp_df.away_steals.tolist()
+        stats_dict['opponent_steal_percentage']  += temp_df.away_steal_percentage.tolist()
+        stats_dict['opponent_ranking']  += temp_df.away_ranking.tolist()
+        stats_dict['opponent_points']  += temp_df.away_points.tolist()
+        stats_dict['opponent_personal_fouls']  += temp_df.away_personal_fouls.tolist()
+        stats_dict['opponent_offensive_rebounds']  += temp_df.away_offensive_rebounds.tolist()
+        stats_dict['opponent_offensive_rebound_percentage']  += temp_df.away_offensive_rebound_percentage.tolist()
+        stats_dict['opponent_offensive_rating']  += temp_df.away_offensive_rating.tolist()
+        stats_dict['opponent_minutes_played']  += temp_df.away_minutes_played.tolist()
+        stats_dict['opponent_losses']  += temp_df.away_losses.tolist()
+        stats_dict['opponent_free_throws']  += temp_df.away_free_throws.tolist()
+        stats_dict['opponent_free_throw_percentage']  += temp_df.away_free_throw_percentage.tolist()
+        stats_dict['opponent_free_throw_attempts']  += temp_df.away_free_throw_attempts.tolist()
+        stats_dict['opponent_free_throw_attempt_rate']  += temp_df.away_free_throw_attempt_rate.tolist()
+        stats_dict['opponent_field_goals']  += temp_df.away_field_goals.tolist()
+        stats_dict['opponent_field_goal_percentage']  += temp_df.away_field_goal_percentage.tolist()
+        stats_dict['opponent_field_goal_attempts']  += temp_df.away_field_goal_attempts.tolist()
+        stats_dict['opponent_effective_field_goal_percentage']  += temp_df.away_effective_field_goal_percentage.tolist()
+        stats_dict['opponent_defensive_rebounds']  += temp_df.away_defensive_rebounds.tolist()
+        stats_dict['opponent_defensive_rating']  += temp_df.away_defensive_rating.tolist()
+        stats_dict['opponent_blocks']  += temp_df.away_blocks.tolist()
+        stats_dict['opponent_block_percentage']  += temp_df.away_block_percentage.tolist()
+        stats_dict['opponent_assists']  += temp_df.away_assists.tolist()
+        stats_dict['opponent_assist_percentage']  += temp_df.away_assist_percentage.tolist()
+        stats_dict['home'] += [1] * len(temp_df)
+        stats_dict['season']  += temp_df.season.tolist()
+
+        #Home/loser Games lost on the road
+        temp_df = df[(df.losing_name == Team) & (df.winner == "Home")]
+        stats_dict['team']  += temp_df.losing_name.tolist()
+        stats_dict['opponent']  += temp_df.winning_name.tolist()
+        stats_dict['date']  += temp_df.date.tolist()
+        stats_dict['pace']  += temp_df.pace.tolist()
+        stats_dict['wins']  += temp_df.away_wins.tolist()
+        stats_dict['win_percentage']  += temp_df.away_win_percentage.tolist()
+        stats_dict['two_point_field_goals']  += temp_df.away_two_point_field_goals.tolist()
+        stats_dict['two_point_field_goal_percentage']  += temp_df.away_two_point_field_goal_percentage.tolist() 
+        stats_dict['two_point_field_goal_attempts']  += temp_df.away_two_point_field_goal_attempts.tolist()
+        stats_dict['turnovers']  += temp_df.away_turnovers.tolist()
+        stats_dict['turnover_percentage']  += temp_df.away_turnover_percentage.tolist()
+        stats_dict['true_shooting_percentage']  += temp_df.away_true_shooting_percentage.tolist()
+        stats_dict['total_rebounds']  += temp_df.away_total_rebounds.tolist()
+        stats_dict['total_rebound_percentage']  += temp_df.away_total_rebound_percentage.tolist()
+        stats_dict['three_point_field_goals']  += temp_df.away_three_point_field_goals.tolist()
+        stats_dict['three_point_field_goal_percentage']  += temp_df.away_three_point_field_goal_percentage.tolist()
+        stats_dict['three_point_field_goal_attempts']  += temp_df.away_three_point_field_goal_attempts.tolist()
+        stats_dict['three_point_attempt_rate']  += temp_df.away_three_point_attempt_rate.tolist()
+        stats_dict['steals']  += temp_df.away_steals.tolist()
+        stats_dict['steal_percentage']  += temp_df.away_steal_percentage.tolist()
+        stats_dict['ranking']  += temp_df.away_ranking.tolist()
+        stats_dict['points']  += temp_df.away_points.tolist()
+        stats_dict['personal_fouls']  += temp_df.away_personal_fouls.tolist()
+        stats_dict['offensive_rebounds']  += temp_df.away_offensive_rebounds.tolist()
+        stats_dict['offensive_rebound_percentage']  += temp_df.away_offensive_rebound_percentage.tolist()
+        stats_dict['offensive_rating']  += temp_df.away_offensive_rating.tolist()
+        stats_dict['minutes_played']  += temp_df.away_minutes_played.tolist()
+        stats_dict['losses']  += temp_df.away_losses.tolist()
+        stats_dict['free_throws']  += temp_df.away_free_throws.tolist()
+        stats_dict['free_throw_percentage']  += temp_df.away_free_throw_percentage.tolist()
+        stats_dict['free_throw_attempts']  += temp_df.away_free_throw_attempts.tolist()
+        stats_dict['free_throw_attempt_rate']  += temp_df.away_free_throw_attempt_rate.tolist()
+        stats_dict['field_goals']  += temp_df.away_field_goals.tolist()
+        stats_dict['field_goal_percentage']  += temp_df.away_field_goal_percentage.tolist()
+        stats_dict['field_goal_attempts']  += temp_df.away_field_goal_attempts.tolist()
+        stats_dict['effective_field_goal_percentage']  += temp_df.away_effective_field_goal_percentage.tolist()
+        stats_dict['defensive_rebounds']  += temp_df.away_defensive_rebounds.tolist()
+        stats_dict['defensive_rating']  += temp_df.away_defensive_rating.tolist()
+        stats_dict['blocks']  += temp_df.away_blocks.tolist()
+        stats_dict['block_percentage']  += temp_df.away_block_percentage.tolist()
+        stats_dict['assists']  += temp_df.away_assists.tolist()
+        stats_dict['assist_percentage']  += temp_df.away_assist_percentage.tolist()
+        stats_dict['result'] += [0] * len(temp_df)
+        stats_dict['opponent_wins']  += temp_df.home_wins.tolist()
+        stats_dict['opponent_win_percentage']  += temp_df.home_win_percentage.tolist()
+        stats_dict['opponent_two_point_field_goals']  += temp_df.home_two_point_field_goals.tolist()
+        stats_dict['opponent_two_point_field_goal_percentage']  += temp_df.home_two_point_field_goal_percentage.tolist() 
+        stats_dict['opponent_two_point_field_goal_attempts']  += temp_df.home_two_point_field_goal_attempts.tolist()
+        stats_dict['opponent_turnovers']  += temp_df.home_turnovers.tolist()
+        stats_dict['opponent_turnover_percentage']  += temp_df.home_turnover_percentage.tolist()
+        stats_dict['opponent_true_shooting_percentage']  += temp_df.home_true_shooting_percentage.tolist()
+        stats_dict['opponent_total_rebounds']  += temp_df.home_total_rebounds.tolist()
+        stats_dict['opponent_total_rebound_percentage']  += temp_df.home_total_rebound_percentage.tolist()
+        stats_dict['opponent_three_point_field_goals']  += temp_df.home_three_point_field_goals.tolist()
+        stats_dict['opponent_three_point_field_goal_percentage']  += temp_df.home_three_point_field_goal_percentage.tolist()
+        stats_dict['opponent_three_point_field_goal_attempts']  += temp_df.home_three_point_field_goal_attempts.tolist()
+        stats_dict['opponent_three_point_attempt_rate']  += temp_df.home_three_point_attempt_rate.tolist()
+        stats_dict['opponent_steals']  += temp_df.home_steals.tolist()
+        stats_dict['opponent_steal_percentage']  += temp_df.home_steal_percentage.tolist()
+        stats_dict['opponent_ranking']  += temp_df.home_ranking.tolist()
+        stats_dict['opponent_points']  += temp_df.home_points.tolist()
+        stats_dict['opponent_personal_fouls']  += temp_df.home_personal_fouls.tolist()
+        stats_dict['opponent_offensive_rebounds']  += temp_df.home_offensive_rebounds.tolist()
+        stats_dict['opponent_offensive_rebound_percentage']  += temp_df.home_offensive_rebound_percentage.tolist()
+        stats_dict['opponent_offensive_rating']  += temp_df.home_offensive_rating.tolist()
+        stats_dict['opponent_minutes_played']  += temp_df.home_minutes_played.tolist()
+        stats_dict['opponent_losses']  += temp_df.home_losses.tolist()
+        stats_dict['opponent_free_throws']  += temp_df.home_free_throws.tolist()
+        stats_dict['opponent_free_throw_percentage']  += temp_df.home_free_throw_percentage.tolist()
+        stats_dict['opponent_free_throw_attempts']  += temp_df.home_free_throw_attempts.tolist()
+        stats_dict['opponent_free_throw_attempt_rate']  += temp_df.home_free_throw_attempt_rate.tolist()
+        stats_dict['opponent_field_goals']  += temp_df.home_field_goals.tolist()
+        stats_dict['opponent_field_goal_percentage']  += temp_df.home_field_goal_percentage.tolist()
+        stats_dict['opponent_field_goal_attempts']  += temp_df.home_field_goal_attempts.tolist()
+        stats_dict['opponent_effective_field_goal_percentage']  += temp_df.home_effective_field_goal_percentage.tolist()
+        stats_dict['opponent_defensive_rebounds']  += temp_df.home_defensive_rebounds.tolist()
+        stats_dict['opponent_defensive_rating']  += temp_df.home_defensive_rating.tolist()
+        stats_dict['opponent_blocks']  += temp_df.home_blocks.tolist()
+        stats_dict['opponent_block_percentage']  += temp_df.home_block_percentage.tolist()
+        stats_dict['opponent_assists']  += temp_df.home_assists.tolist()
+        stats_dict['opponent_assist_percentage']  += temp_df.home_assist_percentage.tolist()
+        stats_dict['home'] += [0] * len(temp_df)
+        stats_dict['season']  += temp_df.season.tolist()
+  #Conver the dicionary to a pd.DataFrame() and do some brief cleanup      
+    final_df = pd.DataFrame.from_dict(stats_dict)
+    final_df['date'] = pd.to_datetime(final_df['date'])
+    final_df.drop_duplicates(inplace = True)
+    final_df.sort_values('date',inplace = True)
+    
+    return final_df
+
+def get_expected_spread(sum_df,team_1,team_2,verbose = False,neutral = True):
+
+    for i in sum_df.columns:
+        try:
+            sum_df[i] = pd.to_numeric(sum_df[i])
+        except:
+            pass
+    sum_df.columns = ['_'.join(i.split()) for i in sum_df.columns.tolist()]
+    sum_df.columns = [i.replace(".","") for i in sum_df.columns]
+    sum_df.columns = [i.replace("-","_") for i in sum_df.columns]
+    off_eff_avg = round(sum_df.Off_Efficiency_Adj.mean(),2)
+    def_eff_avg = round(sum_df.Def_Efficiency_Adj.mean(),2)
+
+    team_1_off_eff = sum_df.loc[sum_df.Team == team_1].Off_Efficiency_Adj.item()
+    team_1_def_eff = sum_df.loc[sum_df.Team == team_1].Def_Efficiency_Adj.item()
+    team_2_off_eff = sum_df.loc[sum_df.Team == team_2].Off_Efficiency_Adj.item()
+    team_2_def_eff = sum_df.loc[sum_df.Team == team_2].Def_Efficiency_Adj.item()
+    team_1_tempo = sum_df.loc[sum_df.Team == team_1].Tempo_Adj.item()
+    team_2_tempo = sum_df.loc[sum_df.Team == team_2].Tempo_Adj.item()
+
+    team_1_off_pct = (team_1_off_eff/off_eff_avg)-1
+    team_1_off_pct_adjustment_factor = 1+round(team_1_off_pct + ((team_2_def_eff/def_eff_avg) - 1),2)
+    team_1_off_adj = round(off_eff_avg * team_1_off_pct_adjustment_factor,2)
+    
+
+    team_2_off_pct = (team_2_off_eff/off_eff_avg)-1
+    team_2_off_pct_adjustment_factor = 1+round(team_2_off_pct + ((team_1_def_eff/def_eff_avg) - 1),2)
+    team_2_off_adj = round(off_eff_avg * team_2_off_pct_adjustment_factor,2)
+    if verbose:
+        if neutral:
+            print(f"{team_1}'s expected efficiency is {team_1_off_adj}")
+            print(f"{team_2}'s expected efficiency is {team_2_off_adj}")
+            print(f"{team_1} averages {round(team_1_tempo)} possessions per game")
+            print(f"{team_2} averages {round(team_2_tempo)} possessions per game")
+            print(f"{team_1} is therefore expected to score {round((team_1_tempo)*(team_1_off_adj/100))} points")
+            print(f"{team_2} is therefore expected to score {round((team_2_tempo)*(team_2_off_adj/100))} points")
+        else:
+            print(f"{team_1}'s expected efficiency is {team_1_off_adj}")
+            print(f"{team_2}'s expected efficiency is {team_2_off_adj}")
+            print(f"{team_1} averages {round(team_1_tempo)} possessions per game")
+            print(f"{team_2} averages {round(team_2_tempo)} possessions per game")
+            print(f"{team_1} is therefore expected to score {round((team_1_tempo)*(team_1_off_adj/100)+3.75)} points")
+            print(f"{team_2} is therefore expected to score {round((team_2_tempo)*(team_2_off_adj/100))} points")
+    if neutral:
+        return(round((team_1_tempo)*(team_1_off_adj/100)),round((team_2_tempo)*(team_2_off_adj/100)))
+    else:
+        return(round((team_1_tempo)*(team_1_off_adj/100)+3.75),round((team_2_tempo)*(team_2_off_adj/100)))
 
 """
 To do list:
